@@ -25,6 +25,7 @@ final class MetalLayerView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer = CAMetalLayer()
+        layer?.isOpaque = false
     }
     required init?(coder: NSCoder) {fatalError()}
 

@@ -17,7 +17,7 @@ import Combine
 #endif
         }
     }
-    let renderer: Renderer = .init(vertexFunction: .nameOnDefaultLib("vertexShader"), fragmentFunction: .nameOnDefaultLib("fragmentShader"), clearDepth: 1e-4)
+    let renderer: Renderer = .init(vertexFunction: .nameOnDefaultLib("vertexShader"), fragmentFunction: .nameOnDefaultLib("fragmentShader"))//, clearDepth: 1e-4)
     var isRemoteSceneActive: Bool = false
 
     var arkitValue: Renderer.ARKitValue?

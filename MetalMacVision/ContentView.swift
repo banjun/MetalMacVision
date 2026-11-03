@@ -6,7 +6,8 @@ struct ContentView: View {
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @Environment(RendererSceneController.self) private var rendererSceneController
     // another renderer than rendererSceneController.renderer, as it dosen't support multi-input yet
-    @State private var renderer: Renderer = .init(vertexFunction: .nameOnDefaultLib("vertexShader"), fragmentFunction: .nameOnDefaultLib("fragmentShader"))
+    @State private var renderer1: Renderer = .init(vertexFunction: .nameOnDefaultLib("vertexShader"), fragmentFunction: .nameOnDefaultLib("fragmentShader"))
+    @State private var renderer2: Renderer = .init(vertexFunction: .nameOnDefaultLib("vertexShader"), fragmentFunction: .nameOnDefaultLib("fragmentShader"))
 
     var body: some View {
         HStack(alignment: .top) {
@@ -14,10 +15,26 @@ struct ContentView: View {
 #if os(macOS)
                 VStack {
                     Text("CAMetalLayer").padding()
-                    MetalLayer(renderer: renderer, arkitContainer: .fakeFixed(fallbackDeviceAnchorProvider: {
-                        rendererSceneController.arkitValue?.viewFromOrigin.0.inverse ??
-                        rendererSceneController.camera.transform.matrix
-                    }))
+                    HStack {
+                        MetalLayer(renderer: renderer1, arkitContainer: .fake(
+                            fallbackDeviceAnchorProvider: {
+                                rendererSceneController.arkitValue?.viewFromOrigin.0.inverse ??
+                                rendererSceneController.camera.transform.matrix
+                            },
+                            fallbackProjectionProvider: {
+                                rendererSceneController.arkitValue.map {($0.clipFromView.0, $0.clipFromView.0)}
+                            },
+                        ))
+                        MetalLayer(renderer: renderer2, arkitContainer: .fake(
+                            fallbackDeviceAnchorProvider: {
+                                rendererSceneController.arkitValue?.viewFromOrigin.1.inverse ??
+                                rendererSceneController.camera.transform.matrix
+                            },
+                            fallbackProjectionProvider: {
+                                rendererSceneController.arkitValue.map {($0.clipFromView.1, $0.clipFromView.1)}
+                            },
+                        ))
+                    }
                 }
                 Divider()
 #endif
@@ -69,32 +86,5 @@ struct ContentView: View {
             }
             .fixedSize()
         }
-    }
-}
-
-struct Matrix: View {
-    var value: simd_float4x4
-
-    private var rows: [[Float]] {
-        (0..<4).map { row in
-            (0..<4).map { column in
-                value[column][row]
-            }
-        }
-    }
-
-    var body: some View {
-        let f = Decimal.FormatStyle.number.precision(.fractionLength(3))
-        Grid {
-            ForEach(0..<4, id: \.self) { row in
-                GridRow {
-                    ForEach(0..<4, id: \.self) { column in
-                        Text(Decimal(Double(rows[row][column])).formatted(f))
-                    }
-                }
-            }
-        }
-        .monospacedDigit()
-        .fixedSize()
     }
 }

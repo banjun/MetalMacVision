@@ -9,6 +9,8 @@ final class Renderer {
     private var commandQueue: (any MTLCommandQueue)?
     var renderPipelineState: (any MTLRenderPipelineState)?
     var depthState: (any MTLDepthStencilState)?
+    var automaticallyCreatesDepthTexture: Bool = true {didSet {renderPipelineState = nil}}
+    var autoDepthTexture: (any MTLTexture)?
 
     private let arkitValueSubject: CurrentValueSubject<ARKitValue?, Never> = .init(nil)
     var arkitValues: some Publisher<ARKitValue, Never> {arkitValueSubject.compactMap(\.self)}
@@ -23,10 +25,12 @@ final class Renderer {
         private var arkitSession: ARKitSession? {didSet {oldValue?.stop()}}
         private var worldTrackingProvider: WorldTrackingProvider?
         var fallbackDeviceAnchorProvider: (() -> float4x4?)?
+        var fallbackProjectionProvider: (() -> (float4x4, float4x4)?)?
 
-        static func fakeFixed(fallbackDeviceAnchorProvider: @escaping () -> float4x4?) -> ARKitContainer {
+        static func fake(fallbackDeviceAnchorProvider: @escaping () -> float4x4?, fallbackProjectionProvider: @escaping () -> (float4x4, float4x4)?) -> ARKitContainer {
             let c = self.init(arkitSession: nil)
             c.fallbackDeviceAnchorProvider = fallbackDeviceAnchorProvider
+            c.fallbackProjectionProvider = fallbackProjectionProvider
             return c
         }
 
@@ -103,7 +107,14 @@ final class Renderer {
         d.vertexFunction = vertexFunction
         d.fragmentFunction = fragmentFunction
         d.colorAttachments[0].pixelFormat = colorFormat
-        d.depthAttachmentPixelFormat = depthFormat
+        d.colorAttachments[0].isBlendingEnabled = true
+        d.colorAttachments[0].rgbBlendOperation = .add
+        d.colorAttachments[0].alphaBlendOperation = .add
+        d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        d.colorAttachments[0].sourceAlphaBlendFactor = .one
+        d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        d.depthAttachmentPixelFormat = depthFormat == .invalid && automaticallyCreatesDepthTexture ? .depth32Float : depthFormat
 //        d.stencilAttachmentPixelFormat = depthFormat
         d.rasterSampleCount = 1
         return try device.makeRenderPipelineState(descriptor: d)
@@ -111,7 +122,7 @@ final class Renderer {
 
     private func makeDepthState(device: any MTLDevice) -> (any MTLDepthStencilState)? {
         let d = MTLDepthStencilDescriptor()
-        d.depthCompareFunction = MTLCompareFunction.greater
+        d.depthCompareFunction = MTLCompareFunction.greaterEqual
         d.isDepthWriteEnabled = true
         return device.makeDepthStencilState(descriptor: d)
     }
@@ -163,7 +174,8 @@ final class Renderer {
 
             if let deviceAnchorResponse, let colorTexture = drawable.colorTexture {
                 let viewFromOrigin = drawable.viewFromOrigin(originFromDeviceAnchor: deviceAnchorResponse.originFromAnchorTransform)
-                let clipFromView = drawable.clipFromView ?? (
+                let clipFromView = drawable.clipFromView ?? arkitContainer?.fallbackProjectionProvider?() ?? (
+                    // Simulator values as placeholder
                     simd_float4x4(
                         SIMD4<Float>(1, 0, 0, 0),
                         SIMD4<Float>(0, 1.78, 0, 0),
@@ -178,6 +190,18 @@ final class Renderer {
                     ),
                 )
                 arkitValueSubject.send(.init(viewFromOrigin: viewFromOrigin, clipFromView: clipFromView))
+
+                if drawable.depthTexture == nil && automaticallyCreatesDepthTexture {
+                    if autoDepthTexture?.width != colorTexture.width || autoDepthTexture?.height != colorTexture.height {
+                        autoDepthTexture = device.makeTexture(descriptor: {
+                            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float, width: colorTexture.width, height: colorTexture.height, mipmapped: false)
+                            d.usage = [.renderTarget]
+                            return d
+                        }())
+                    }
+                }
+                let depthTexture = drawable.depthTexture ?? autoDepthTexture
+
                 let viewCount = drawable.viewCount
                 if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: {
                     let d = MTLRenderPassDescriptor()
@@ -186,7 +210,7 @@ final class Renderer {
                     d.colorAttachments[0].loadAction = .clear
                     d.colorAttachments[0].storeAction = .store
                     d.colorAttachments[0].clearColor = clearColor
-                    if let depthTexture = drawable.depthTexture {
+                    if let depthTexture {
                         d.depthAttachment.texture = depthTexture
                         d.depthAttachment.loadAction = .clear
                         d.depthAttachment.storeAction = .store // required for device
@@ -206,7 +230,7 @@ final class Renderer {
 //                    defer {renderContext.endEncoding(commandEncoder: encoder)}
                     defer {encoder.endEncoding()}
                     encoder.setRenderPipelineState(renderPipelineState)
-                    if drawable.depthTexture != nil {
+                    if depthTexture != nil {
                         encoder.setDepthStencilState(depthState)
                     }
                     if viewCount > 1 {
@@ -236,6 +260,6 @@ final class Renderer {
             clipFromView: clipFromView)
 
         encoder.setVertexBytes(&uniforms, length: MemoryLayout.stride(ofValue: uniforms), index: 1)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
     }
 }
